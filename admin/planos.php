@@ -72,7 +72,7 @@ if (isset($_POST['salvar'])) {
         $mensagem = "Plano criado com sucesso!";
     }
 
-    // Limpa formulário após salvar
+    // Limpa formulário
     $editarPlano = [
         'id' => '',
         'nome' => '',
@@ -81,16 +81,28 @@ if (isset($_POST['salvar'])) {
 }
 
 /* =========================
-   EXCLUIR PLANO
+   EXCLUIR PLANO (SEGURO)
 ========================= */
 if (isset($_GET['excluir'])) {
 
     $id = (int) $_GET['excluir'];
 
-    $stmt = $conn->prepare("DELETE FROM planos WHERE id = :id");
-    $stmt->execute([':id' => $id]);
+    // Verifica se está em uso
+    $stmtCheck = $conn->prepare("
+        SELECT COUNT(*) FROM pagamentos WHERE plano_id = :id
+    ");
+    $stmtCheck->execute([':id' => $id]);
+    $total = $stmtCheck->fetchColumn();
 
-    $mensagem = "Plano excluído com sucesso!";
+    if ($total > 0) {
+        $mensagem = "Não é possível excluir! Existem clientes usando este plano.";
+    } else {
+
+        $stmt = $conn->prepare("DELETE FROM planos WHERE id = :id");
+        $stmt->execute([':id' => $id]);
+
+        $mensagem = "Plano excluído com sucesso!";
+    }
 }
 
 /* =========================
@@ -109,19 +121,15 @@ $planos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-100 p-8">
+
 <div class="bg-white shadow p-4 flex justify-between items-center">
    <h1 class="text-2xl font-bold mb-4">Gerenciar Planos</h1>
     <div class="space-x-4">
         <a href="clientes.php" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">Clientes</a>
         <a href="dashboard.php" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">Dashboard</a>
-        <a href="pagamentos.php" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">Pagamentos</a>
         <a href="logout.php" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">Sair</a>
     </div>
 </div>
-
-
-
-
 
 <!-- FORMULÁRIO -->
 <form method="POST" class="bg-white p-6 rounded shadow mb-6">
@@ -131,25 +139,27 @@ $planos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 <input type="text" name="nome" placeholder="Nome do Plano"
 required class="border p-2 rounded"
-value="<?= $editarPlano['nome'] ?>">
+value="<?= htmlspecialchars($editarPlano['nome']) ?>">
 
 <input type="text" name="valor" placeholder="Valor (ex: 29.90)"
 required class="border p-2 rounded"
-value="<?= $editarPlano['valor'] ?>">
+value="<?= htmlspecialchars($editarPlano['valor']) ?>">
 
 </div>
 
 <button type="submit" name="salvar"
-class="mt-4 bg-blue-600 text-white px-4 py-2 rounded">
+class="mt-4 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
 <?= $editarPlano['id'] ? 'Atualizar Plano' : 'Criar Plano' ?>
 </button>
 
 </form>
+
 <?php if ($mensagem): ?>
 <div class="bg-green-100 text-green-700 p-3 mb-4 rounded">
     <?= $mensagem ?>
 </div>
 <?php endif; ?>
+
 <!-- LISTAGEM -->
 <div class="bg-white p-6 rounded shadow">
 <table class="w-full border">
@@ -167,19 +177,19 @@ class="mt-4 bg-blue-600 text-white px-4 py-2 rounded">
 
 <tr class="border-t">
 <td class="p-2"><?= $plano['id'] ?></td>
-<td class="p-2"><?= $plano['nome'] ?></td>
+<td class="p-2"><?= htmlspecialchars($plano['nome']) ?></td>
 <td class="p-2 font-semibold">
 R$ <?= number_format($plano['valor'], 2, ",", ".") ?>
 </td>
-<td class="p-2">
+<td class="p-2 space-x-2">
 
 <a href="?editar=<?= $plano['id'] ?>"
-class="text-yellow-600 mr-3">Editar</a>
+class="text-yellow-600 hover:underline">✏️ Editar</a>
 
 <a href="?excluir=<?= $plano['id'] ?>"
-class="text-red-600"
+class="text-red-600 hover:underline"
 onclick="return confirm('Tem certeza que deseja excluir este plano?')">
-Excluir
+🗑️ Excluir
 </a>
 
 </td>

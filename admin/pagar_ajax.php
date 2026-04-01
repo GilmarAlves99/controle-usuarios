@@ -12,9 +12,9 @@ if (!isset($_SESSION['admin_id'])) {
 }
 
 // 📥 Recebe ID
-$cliente_id = (int) ($_POST['cliente_id'] ?? 0);
+$cliente_id = isset($_POST['cliente_id']) ? (int) $_POST['cliente_id'] : 0;
 
-if (!$cliente_id) {
+if ($cliente_id <= 0) {
     echo json_encode(['success' => false, 'msg' => 'ID inválido']);
     exit;
 }
@@ -40,62 +40,91 @@ try {
     $hoje = new DateTime();
     $vencimentoAtual = new DateTime($pg['data_vencimento']);
 
-    // 🔥 REGRA INTELIGENTE DE RENOVAÇÃO
+    // 🔥 REGRA DE RENOVAÇÃO INTELIGENTE
     if ($vencimentoAtual > $hoje) {
-        // Ainda não venceu → soma 1 mês em cima do vencimento atual
+        // ainda válido → soma em cima
         $novaDataVencimento = clone $vencimentoAtual;
-        $novaDataVencimento->modify('+1 month');
     } else {
-        // Já venceu → soma 1 mês a partir de hoje
-        $novaDataVencimento = new DateTime('+1 month');
+        // vencido → começa hoje
+        $novaDataVencimento = clone $hoje;
     }
 
-    // 💾 Atualiza pagamento
-    $stmtUpdate = $conn->prepare("
-        UPDATE pagamentos
-        SET 
-            data_compra = NOW(),
-            data_vencimento = :novaData,
-            status = 'Ativo'
-        WHERE id = :id
+    $novaDataVencimento->modify('+1 month');
+
+    // 🔎 Busca valor do plano
+    $stmtPlano = $conn->prepare("
+        SELECT valor 
+        FROM planos 
+        WHERE id = :plano_id
+        LIMIT 1
+    ");
+    $stmtPlano->execute([':plano_id' => $pg['plano_id']]);
+    $plano = $stmtPlano->fetch(PDO::FETCH_ASSOC);
+
+    if (!$plano) {
+        echo json_encode(['success' => false, 'msg' => 'Plano não encontrado']);
+        exit;
+    }
+
+    $valor_pago = (float)$plano['valor'];
+    $stmtCheck = $conn->prepare("
+    SELECT COUNT(*) 
+    FROM pagamentos
+    WHERE cliente_id = :cliente_id
+    AND status = 'Pago'
+    AND DATE_TRUNC('month', data_compra) = DATE_TRUNC('month', CURRENT_DATE)
+");
+
+    $stmtCheck->execute([':cliente_id' => $cliente_id]);
+    $jaPagou = $stmtCheck->fetchColumn();
+
+    if ($jaPagou > 0) {
+        echo json_encode([
+            'success' => false,
+            'msg' => 'Cliente já pagou este mês!'
+        ]);
+        exit;
+    }
+
+
+    // ✅ INSERE NOVO PAGAMENTO (HISTÓRICO REAL)
+    $stmtInsert = $conn->prepare("
+        INSERT INTO pagamentos 
+        (cliente_id, plano_id, valor_pago, data_compra, data_vencimento, status)
+        VALUES 
+        (:cliente_id, :plano_id, :valor_pago, NOW(), :data_vencimento, 'Pago')
     ");
 
-    $stmtUpdate->execute([
-        ':novaData' => $novaDataVencimento->format('Y-m-d'),
-        ':id' => $pg['id']
+    $stmtInsert->execute([
+        ':cliente_id' => $cliente_id,
+        ':plano_id' => $pg['plano_id'],
+        ':valor_pago' => $valor_pago,
+        ':data_vencimento' => $novaDataVencimento->format('Y-m-d')
     ]);
 
-    // 🟢 Garante cliente ativo
+    // 🟢 Atualiza cliente para ativo
     $stmtCliente = $conn->prepare("
-        UPDATE clientes
-        SET ativo = true
+        UPDATE clientes 
+        SET ativo = true 
         WHERE id = :cliente_id
     ");
     $stmtCliente->execute([':cliente_id' => $cliente_id]);
 
-    // 🎨 Define cor da célula de vencimento
-    $diff = (int)$hoje->diff($novaDataVencimento)->format("%r%a");
-
-    $classVenc = '';
-    if ($diff <= 1) {
-        $classVenc = 'bg-red-500 text-white';
-    } elseif ($diff <= 5) {
-        $classVenc = 'bg-purple-500 text-white';
-    } elseif ($diff <= 10) {
-        $classVenc = 'bg-yellow-400';
-    }
-
     echo json_encode([
         'success' => true,
         'msg' => 'Pagamento registrado com sucesso!',
-        'vencimento' => $novaDataVencimento->format('d/m/Y'),
-        'classVenc' => $classVenc
+        'novo_vencimento' => $novaDataVencimento->format('d/m/Y')
     ]);
+} catch (PDOException $e) {
 
+    echo json_encode([
+        'success' => false,
+        'msg' => 'Erro no banco: ' . $e->getMessage()
+    ]);
 } catch (Exception $e) {
 
     echo json_encode([
         'success' => false,
-        'msg' => 'Erro: ' . $e->getMessage()
+        'msg' => 'Erro geral: ' . $e->getMessage()
     ]);
 }
